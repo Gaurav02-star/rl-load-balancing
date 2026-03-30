@@ -1,4 +1,4 @@
-package org.cloudbus.cloudsim.examples;
+package org;
 
 /*
  * Title:        CloudSim Toolkit

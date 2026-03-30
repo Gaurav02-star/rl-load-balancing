@@ -1,4 +1,4 @@
-package org.cloudbus.cloudsim.examples;
+package org;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
