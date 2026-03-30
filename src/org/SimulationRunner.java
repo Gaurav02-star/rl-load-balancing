@@ -146,19 +146,27 @@ public class SimulationRunner {
      */
     private static List<Vm> createVms(int brokerId) {
         List<Vm> list = new ArrayList<>();
+
+        // Different MIPS values for heterogeneity
+        int[] mipsOptions = {500, 1000, 1500, 2000};
+
         for (int i = 0; i < SimulationConfig.NUM_VMS; i++) {
+
+            int mips = mipsOptions[i % mipsOptions.length];
+
             list.add(new Vm(
-                i,
-                brokerId,
-                SimulationConfig.VM_MIPS,
-                SimulationConfig.VM_PES,
-                SimulationConfig.VM_RAM,
-                SimulationConfig.VM_BW,
-                SimulationConfig.VM_SIZE,
-                SimulationConfig.VM_VMM,
-                new CloudletSchedulerTimeShared()
+                    i,
+                    brokerId,
+                    mips,
+                    SimulationConfig.VM_PES,
+                    SimulationConfig.VM_RAM,
+                    SimulationConfig.VM_BW,
+                    SimulationConfig.VM_SIZE,
+                    SimulationConfig.VM_VMM,
+                    new CloudletSchedulerTimeShared()
             ));
         }
+
         return list;
     }
 
