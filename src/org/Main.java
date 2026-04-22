@@ -3,82 +3,88 @@ package org;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Main.java  –  Comparison Driver
- *
- * The ONLY file you touch when adding or removing strategies.
- *
- * Each call to runOne() is completely independent:
- *   fresh CloudSim init  →  fresh datacenter, VMs, cloudlets
- *   →  strategy applied  →  results collected  →  metrics printed
- *
- * Adding a new heuristic
- * ──────────────────────
- *   1. Create  YourStrategy.java  implementing AssignmentStrategy
- *   2. Add one line here:  runOne(new YourStrategy(), "Your Strategy", results)
- *   That's it. Nothing else changes.
- */
 public class Main {
 
-    public static void main(String[] args) {
+    private static final int TRAINING_EPISODES = 5_000;
+    private static final int LOG_INTERVAL      = 500;
 
+    public static void main(String[] args) {
         System.out.println("╔══════════════════════════════════════════════════════╗");
         System.out.println("║    CloudSim Load Balancing – Strategy Comparison     ║");
         System.out.println("╚══════════════════════════════════════════════════════╝");
-        System.out.printf("  VMs: %d   |   Cloudlets: %d%n",
+        System.out.printf("  VMs: %d   |   Cloudlets: %d%n%n",
                 SimulationConfig.NUM_VMS, SimulationConfig.NUM_CLOUDLETS);
 
-        // Accumulate Metrics objects for the final comparison table.
         List<Metrics> allResults = new ArrayList<>();
 
-        // ── Run each strategy ────────────────────────────────────────────────
-        // Order here is purely cosmetic; each run is isolated.
+        // ── 1. Classical Heuristics ───────────────────────────────────────────
+        System.out.println("[ Heuristics ]");
+        runOne(new FCFSStrategy(),        "FCFS",         allResults);
+        runOne(new RoundRobinStrategy(),  "Round Robin",  allResults);
+        runOne(new LeastLoadedStrategy(), "Least Loaded", allResults);
+        runOne(new MinMinStrategy(),      "Min-Min",      allResults);
+        runOne(new MaxMinStrategy(),      "Max-Min",      allResults);
 
-        runOne(new FCFSStrategy(),        "FCFS",          allResults);
-        runOne(new RoundRobinStrategy(),  "Round Robin",   allResults);
-        runOne(new LeastLoadedStrategy(), "Least Loaded",  allResults);
-        runOne(new MinMinStrategy(),      "Min-Min",       allResults);
-        runOne(new MaxMinStrategy(),      "Max-Min",       allResults);
-        runOne(new RLStrategy(),          "RL (stub)",     allResults);
+        // ── 2. SARSA(λ) Training ──────────────────────────────────────────────
+        RLStrategy rl = new RLStrategy();
 
-        // ── Final comparison table ────────────────────────────────────────────
+        System.out.printf("%n[ SARSA(λ) Training — %d episodes ]%n", TRAINING_EPISODES);
+        System.out.printf("  %-8s  %-8s  %-10s  %-10s%n",
+                "Episode", "Epsilon", "Q-States", "Traces");
+        System.out.println("  " + "─".repeat(42));
+
+        for (int ep = 1; ep <= TRAINING_EPISODES; ep++) {
+            SimulationRunner.run(rl, "Training");
+
+            if (ep == 1 || ep % LOG_INTERVAL == 0) {
+                System.out.printf("  %-8d  %-8.4f  %-10d  %-10d%n",
+                        ep,
+                        rl.getEpsilon(),
+                        rl.getQTableSize(),
+                        rl.getTraceSize());
+            }
+        }
+
+        System.out.println("  " + "─".repeat(42));
+        System.out.printf("  Training complete.  ε=%.4f  Q-states=%d%n%n",
+                rl.getEpsilon(), rl.getQTableSize());
+
+        /*
+         * What to look for in the training log:
+         *
+         *   Q-States should grow quickly (SARSA(λ) visits states faster than
+         *   TD(0) because credit propagates backward, so early episodes explore
+         *   more of the state space per episode).  It should plateau before
+         *   episode 3 000 for the 19 683-state table.
+         *
+         *   Traces column shows active trace entries at the END of the last
+         *   training episode.  After setEpsilon(0) this will be 0 since we
+         *   call getTraceSize() after the episode completes and eTrace is
+         *   cleared at the start of each episode.
+         *
+         *   If Q-States is still growing at episode 5 000, increase
+         *   TRAINING_EPISODES to 8 000.
+         */
+
+        // ── 3. Final Evaluation (greedy policy, no exploration) ───────────────
+        rl.setEpsilon(0.0);
+        System.out.println("[ SARSA(λ) Final Evaluation ]");
+        runOne(rl, "RL SARSA(λ)", allResults);
+
+        // ── 4. Comparison Table ───────────────────────────────────────────────
         ResultPrinter.printComparisonTable(allResults);
     }
 
-    // =========================================================================
-    //  runOne — orchestrates a single strategy's full lifecycle
-    // =========================================================================
-
-    /**
-     * Run one simulation, compute metrics, print results, accumulate summary.
-     *
-     * @param strategy   the load-balancing algorithm to evaluate
-     * @param name       display label used in all output
-     * @param allResults list to append this run's {@link Metrics} to
-     */
     private static void runOne(AssignmentStrategy strategy,
-                               String name,
-                               List<Metrics> allResults) {
+                               String name, List<Metrics> results) {
         ResultPrinter.printSectionHeader(name);
-
         try {
-            // 1. Run a completely fresh simulation with this strategy
             SimulationResult result = SimulationRunner.run(strategy, name);
-
-            // 2. Print the per-cloudlet execution table
-            ResultPrinter.printCloudletTable(result);
-
-            // 3. Compute all 8 metrics from the raw CloudSim output
             Metrics metrics = MetricsCalculator.compute(result);
-
-            // 4. Print the metrics block for this strategy
             ResultPrinter.printMetrics(metrics);
-
-            // 5. Save for comparison table
-            allResults.add(metrics);
-
-        } catch (RuntimeException e) {
-            System.err.println("  [ERROR] Simulation failed for strategy: " + name);
+            results.add(metrics);
+        } catch (Exception e) {
+            System.err.println("  [ERROR] Strategy failed: " + name);
             e.printStackTrace();
         }
     }
