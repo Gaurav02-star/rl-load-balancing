@@ -494,6 +494,4 @@ At every phase boundary, your existing static benchmark suite (FCFS/RR/LL/Min-Mi
 
 ---
 
-## 14. Open Question Before Coding Begins
 
-Please confirm which CloudSim distribution you're on (classic CloudSim vs CloudSim Plus, and version). It only changes the internals of `CloudSimGateway`/`DynamicBroker` (§5) — everything else in this document is unaffected — but I'd rather write the phase 1–3 code once, correctly, than guess.
