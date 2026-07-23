@@ -6,10 +6,6 @@ import org.cloudbus.cloudsim.Vm;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * DynamicScheduler.java
- * Thin adapter bridge between newly arrived dynamic cloudlets and AssignmentStrategy implementations.
- */
 public class DynamicScheduler {
 
     private final AssignmentStrategy strategy;
@@ -20,22 +16,16 @@ public class DynamicScheduler {
         this.gateway = gateway;
     }
 
-    /**
-     * Schedules an arriving cloudlet by retrieving fresh active VMs from gateway,
-     * delegating assignment, and submitting to execution.
-     */
     public void scheduleArrival(Cloudlet cloudlet) {
-        List<Vm> currentVms = gateway.getActiveVms();
-        if (currentVms.isEmpty()) {
-            throw new IllegalStateException("No active VMs available in CloudSimGateway for dynamic scheduling.");
+        List<Vm> activeVms = gateway.getActiveVms();
+        if (activeVms == null || activeVms.isEmpty()) {
+            throw new IllegalStateException("No active VMs available in CloudSimGateway for scheduling.");
         }
 
-        List<Cloudlet> singletonList = Collections.singletonList(cloudlet);
-
         if (strategy instanceof RLStrategy) {
-            ((RLStrategy) strategy).assignIncremental(cloudlet, currentVms);
+            ((RLStrategy) strategy).assignIncremental(cloudlet, activeVms);
         } else {
-            strategy.assign(singletonList, currentVms);
+            strategy.assign(Collections.singletonList(cloudlet), activeVms);
         }
 
         gateway.submitCloudlet(cloudlet);

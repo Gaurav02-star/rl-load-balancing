@@ -91,7 +91,7 @@ public class MonitoringModule extends SimEntity {
 
     private void sampleTelemetry(double currentTime) {
         List<Vm> activeVms = gateway.getActiveVms();
-        int activeVmCount = activeVms.size();
+        int activeVmCount = Math.max(1, activeVms.size());
 
         Map<Integer, Double> arrivalTimes = workloadGenerator.getCloudletArrivalTimes();
         List<Cloudlet> completedList = gateway.getCompletedCloudlets();
@@ -136,18 +136,18 @@ public class MonitoringModule extends SimEntity {
         double avgResponseTime = (completionsInWindow > 0) ? (sumResponseTime / completionsInWindow) : 0.0;
         double slaViolationRate = (completionsInWindow > 0) ? ((double) slaViolationsInWindow / completionsInWindow) : 0.0;
 
-        double totalCpuUtil = 0.0;
-        double totalQueueLength = 0.0;
+        int inFlightCount = gateway.getInFlightCloudletCount();
+        double avgQueueLength = (double) inFlightCount / activeVmCount;
 
-        for (Vm vm : activeVms) {
-            int activeTasks = vm.getCloudletScheduler().runningCloudlets();
-            double vmUtil = Math.min(1.0, (double) activeTasks / vm.getNumberOfPes());
-            totalCpuUtil += vmUtil;
-            totalQueueLength += activeTasks;
-        }
-
-        double avgCpuUtilisation = (activeVmCount > 0) ? (totalCpuUtil / activeVmCount) : 0.0;
-        double avgQueueLength = (activeVmCount > 0) ? (totalQueueLength / activeVmCount) : 0.0;
+        // NOTE: This is a heuristic proxy for CPU load, not a real utilization reading from
+        // CloudSim's Vm/Host MIPS accounting. It assumes a fixed "capacity" of 2 concurrent
+        // cloudlets per active VM. Once activeVmCount correctly reflects scale-up/down (see
+        // DynamicBroker fix), this ratio will move as intended -- but if you still see it
+        // pinned at a suspiciously round number, check whether inFlightCount (sourced from
+        // DynamicBroker.getInFlightCloudletCount()) is actually receiving all arriving
+        // cloudlets, or whether your scheduler/workload generator is buffering cloudlets
+        // internally before calling broker.submitDynamicCloudlet().
+        double avgCpuUtilisation = Math.min(1.0, (double) inFlightCount / (activeVmCount * 2.0));
 
         ClusterState snapshot = new ClusterState(
                 currentTime,

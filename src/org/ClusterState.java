@@ -1,15 +1,11 @@
 package org;
 
-/**
- * ClusterState.java
- * Immutable snapshot of system dynamic metrics for observability and future RL autoscaling state.
- */
 public class ClusterState {
 
-    private final double simulationTime;
-    private final double avgCpuUtilisation;
-    private final double avgQueueLength;
-    private final double avgResponseTime;
+    private final double time;
+    private final double averageCpuUtilisation;
+    private final double averageQueueLength;
+    private final double averageResponseTime;
     private final double throughput;
     private final int activeVmCount;
     private final double arrivalRate;
@@ -18,10 +14,10 @@ public class ClusterState {
     private final long totalCompletions;
     private final int pendingCloudlets;
 
-    public ClusterState(double simulationTime,
-                        double avgCpuUtilisation,
-                        double avgQueueLength,
-                        double avgResponseTime,
+    public ClusterState(double time,
+                        double averageCpuUtilisation,
+                        double averageQueueLength,
+                        double averageResponseTime,
                         double throughput,
                         int activeVmCount,
                         double arrivalRate,
@@ -29,10 +25,10 @@ public class ClusterState {
                         long totalArrivals,
                         long totalCompletions,
                         int pendingCloudlets) {
-        this.simulationTime = simulationTime;
-        this.avgCpuUtilisation = avgCpuUtilisation;
-        this.avgQueueLength = avgQueueLength;
-        this.avgResponseTime = avgResponseTime;
+        this.time = time;
+        this.averageCpuUtilisation = averageCpuUtilisation;
+        this.averageQueueLength = averageQueueLength;
+        this.averageResponseTime = averageResponseTime;
         this.throughput = throughput;
         this.activeVmCount = activeVmCount;
         this.arrivalRate = arrivalRate;
@@ -42,10 +38,12 @@ public class ClusterState {
         this.pendingCloudlets = pendingCloudlets;
     }
 
-    public double getSimulationTime() { return simulationTime; }
-    public double getAvgCpuUtilisation() { return avgCpuUtilisation; }
-    public double getAvgQueueLength() { return avgQueueLength; }
-    public double getAvgResponseTime() { return avgResponseTime; }
+    public double getTime() { return time; }
+    public double getAverageCpuUtilisation() { return averageCpuUtilisation; }
+    public double getAvgCpuUtilisation() { return averageCpuUtilisation; } // Alias for RLAutoscaler / ThresholdAutoscaler
+    public double getAverageQueueLength() { return averageQueueLength; }
+    public double getAvgQueueLength() { return averageQueueLength; } // Alias for RLAutoscaler / ThresholdAutoscaler
+    public double getAverageResponseTime() { return averageResponseTime; }
     public double getThroughput() { return throughput; }
     public int getActiveVmCount() { return activeVmCount; }
     public double getArrivalRate() { return arrivalRate; }
@@ -53,11 +51,4 @@ public class ClusterState {
     public long getTotalArrivals() { return totalArrivals; }
     public long getTotalCompletions() { return totalCompletions; }
     public int getPendingCloudlets() { return pendingCloudlets; }
-
-    @Override
-    public String toString() {
-        return String.format("Time=%.2fs | ActiveVMs=%d | ArrivalRate=%.2f/s | Throughput=%.2f/s | AvgCPU=%.2f%% | Queue=%.2f | AvgRT=%.3fs | SLA_Viol=%.2f%% | Arrivals=%d | Completions=%d | Pending=%d",
-                simulationTime, activeVmCount, arrivalRate, throughput, avgCpuUtilisation * 100.0,
-                avgQueueLength, avgResponseTime, slaViolationRate * 100.0, totalArrivals, totalCompletions, pendingCloudlets);
-    }
 }

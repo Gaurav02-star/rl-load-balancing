@@ -1,21 +1,12 @@
 package org;
 
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Random;
-
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.CloudletSchedulerTimeShared;
 import org.cloudbus.cloudsim.Datacenter;
-import org.cloudbus.cloudsim.DatacenterBroker;
 import org.cloudbus.cloudsim.DatacenterCharacteristics;
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.Pe;
 import org.cloudbus.cloudsim.Storage;
-import org.cloudbus.cloudsim.UtilizationModel;
-import org.cloudbus.cloudsim.UtilizationModelFull;
 import org.cloudbus.cloudsim.Vm;
 import org.cloudbus.cloudsim.VmAllocationPolicySimple;
 import org.cloudbus.cloudsim.VmSchedulerTimeShared;
@@ -24,84 +15,88 @@ import org.cloudbus.cloudsim.provisioners.BwProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.PeProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
 
-/**
- * SimulationRunner.java
- * Supports static runs and event-driven dynamic runs with autoscaling while preventing memory leaks.
- */
+import java.util.*;
+
 public class SimulationRunner {
 
-    private SimulationRunner() {}
-
-    public static SimulationResult run(AssignmentStrategy strategy, String strategyName) {
+    public static List<Cloudlet> run(AssignmentStrategy strategy, String strategyName) {
         try {
-            // Disable event tracing to conserve JVM memory
-            CloudSim.init(SimulationConfig.NUM_USERS, Calendar.getInstance(), false);
+            CloudSim.init(SimulationConfig.NUM_USERS, Calendar.getInstance(), SimulationConfig.TRACE_FLAG);
 
-            @SuppressWarnings("unused")
-            Datacenter datacenter = createDatacenter("Datacenter_0");
+            String safeName = strategyName.replaceAll("\\s+", "_").replaceAll("[^a-zA-Z0-9_]", "");
 
-            DatacenterBroker broker = new DatacenterBroker("Broker_0");
-            int brokerId = broker.getId();
-
-            List<Vm> vms = createVms(brokerId);
-            broker.submitVmList(vms);
-
-            List<Cloudlet> cloudlets = createCloudlets(brokerId);
-            strategy.assign(cloudlets, vms);
-
-            broker.submitCloudletList(cloudlets);
-
-            CloudSim.startSimulation();
-
-            List<Cloudlet> completed = broker.getCloudletReceivedList();
-
-            CloudSim.stopSimulation();
-
-            return new SimulationResult(strategyName, completed, vms);
-
-        } catch (Exception e) {
-            throw new RuntimeException("Simulation run failed for strategy: " + strategyName, e);
-        }
-    }
-
-    public static DynamicSimulationResult runDynamic(AssignmentStrategy strategy, String strategyName) {
-        return runDynamic(strategy, strategyName, null);
-    }
-
-    public static DynamicSimulationResult runDynamic(AssignmentStrategy strategy, String strategyName, Autoscaler autoscaler) {
-        try {
-            // Disable event tracing to conserve JVM memory
-            CloudSim.init(SimulationConfig.NUM_USERS, Calendar.getInstance(), false);
-
-            Datacenter datacenter = createDatacenter("Datacenter_Dynamic");
-
-            DynamicBroker broker = new DynamicBroker("DynamicBroker");
-            int brokerId = broker.getId();
-
-            List<Vm> vms = createVms(brokerId);
-            broker.submitVmList(vms);
-
+            Datacenter datacenter = createDatacenter("Datacenter_" + safeName);
+            DynamicBroker broker = new DynamicBroker("Broker_" + safeName);
             CloudSimGateway gateway = new CloudSimGateway(broker);
-            DynamicScheduler scheduler = new DynamicScheduler(strategy, gateway);
 
-            VmLifecycleManager lifecycleManager = new VmLifecycleManager(broker, datacenter.getId(), vms.size());
+            // Submit initial VMs via standard broker call so Datacenter creates them at t=0
+            List<Vm> initialVms = createInitialVmList(broker.getId(), SimulationConfig.NUM_VMS);
+            broker.submitVmList(initialVms);
 
             ArrivalDistribution distribution = new PoissonArrival(
                     SimulationConfig.MEAN_ARRIVAL_RATE,
                     SimulationConfig.WORKLOAD_RANDOM_SEED
             );
 
+            DynamicScheduler scheduler = new DynamicScheduler(strategy, gateway);
+
             WorkloadGenerator workloadGenerator = new WorkloadGenerator(
-                    "WorkloadGenerator",
+                    "WorkloadGenerator_" + safeName,
                     distribution,
                     scheduler,
                     SimulationConfig.WORKLOAD_DURATION,
                     SimulationConfig.WORKLOAD_RANDOM_SEED,
-                    brokerId
+                    broker.getId()
+            );
+
+            CloudSim.startSimulation();
+            CloudSim.stopSimulation();
+
+            return gateway.getCompletedCloudlets();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ArrayList<>();
+        }
+    }
+
+    public static DynamicSimulationResult runDynamic(AssignmentStrategy strategy, String strategyName, Autoscaler autoscaler) {
+        try {
+            CloudSim.init(SimulationConfig.NUM_USERS, Calendar.getInstance(), SimulationConfig.TRACE_FLAG);
+
+            String safeName = strategyName.replaceAll("\\s+", "_").replaceAll("[^a-zA-Z0-9_]", "");
+
+            Datacenter datacenter = createDatacenter("Datacenter_" + safeName);
+            DynamicBroker broker = new DynamicBroker("Broker_" + safeName);
+            CloudSimGateway gateway = new CloudSimGateway(broker);
+
+            // Submit initial VMs to broker list so CloudSim binds them to hosts at startup
+            List<Vm> initialVms = createInitialVmList(broker.getId(), SimulationConfig.MIN_VMS);
+            broker.submitVmList(initialVms);
+
+            VmLifecycleManager lifecycleManager = new VmLifecycleManager(
+                    broker,
+                    datacenter.getId(),
+                    SimulationConfig.MIN_VMS
+            );
+
+            ArrivalDistribution distribution = new PoissonArrival(
+                    SimulationConfig.MEAN_ARRIVAL_RATE,
+                    SimulationConfig.WORKLOAD_RANDOM_SEED
+            );
+
+            DynamicScheduler scheduler = new DynamicScheduler(strategy, gateway);
+
+            WorkloadGenerator workloadGenerator = new WorkloadGenerator(
+                    "WorkloadGenerator_" + safeName,
+                    distribution,
+                    scheduler,
+                    SimulationConfig.WORKLOAD_DURATION,
+                    SimulationConfig.WORKLOAD_RANDOM_SEED,
+                    broker.getId()
             );
 
             MonitoringModule monitoringModule = new MonitoringModule(
-                    "MonitoringModule",
+                    "MonitoringModule_" + safeName,
                     gateway,
                     workloadGenerator,
                     lifecycleManager,
@@ -112,23 +107,91 @@ public class SimulationRunner {
             );
 
             CloudSim.startSimulation();
-
-            List<Cloudlet> completed = broker.getCompletedCloudletList();
-
             CloudSim.stopSimulation();
+
+            List<ClusterState> history = monitoringModule.getHistory();
+            List<Cloudlet> completedCloudlets = gateway.getCompletedCloudlets();
+
+            long totalArrivals = workloadGenerator.getTotalArrivals();
+            int pendingCloudlets = (int) Math.max(0, totalArrivals - completedCloudlets.size());
+
+            double totalResponseTime = 0.0;
+            double totalTurnaroundTime = 0.0;
+            long slaViolations = 0;
+            Map<Integer, Double> arrivalTimes = workloadGenerator.getCloudletArrivalTimes();
+
+            for (Cloudlet c : completedCloudlets) {
+                Double arrTime = arrivalTimes.get(c.getCloudletId());
+                double arrival = (arrTime != null) ? arrTime : c.getSubmissionTime();
+
+                double responseTime = Math.max(0.0, c.getExecStartTime() - arrival);
+                double turnaroundTime = Math.max(0.0, c.getFinishTime() - arrival);
+
+                totalResponseTime += responseTime;
+                totalTurnaroundTime += turnaroundTime;
+
+                if (responseTime > SimulationConfig.RESPONSE_TIME_SLA) {
+                    slaViolations++;
+                }
+            }
+
+            int count = completedCloudlets.size();
+            double avgResponseTime = (count > 0) ? (totalResponseTime / count) : 0.0;
+            double avgTurnaroundTime = (count > 0) ? (totalTurnaroundTime / count) : 0.0;
+            double slaViolationRate = (count > 0) ? ((double) slaViolations / count) : 0.0;
+
+            double overallThroughput = (CloudSim.clock() > 0) ? ((double) count / CloudSim.clock()) : 0.0;
+
+            double peakArrival = 0.0;
+            double peakQueue = 0.0;
+            double sumCpuUtil = 0.0;
+
+            for (ClusterState s : history) {
+                if (s.getArrivalRate() > peakArrival) peakArrival = s.getArrivalRate();
+                if (s.getAverageQueueLength() > peakQueue) peakQueue = s.getAverageQueueLength();
+                sumCpuUtil += s.getAverageCpuUtilisation();
+            }
+
+            double avgCpuUtil = (!history.isEmpty()) ? (sumCpuUtil / history.size()) : 0.0;
 
             return new DynamicSimulationResult(
                     strategyName,
-                    completed,
-                    vms,
-                    monitoringModule.getHistory(),
-                    workloadGenerator.getCloudletArrivalTimes(),
-                    workloadGenerator.getTotalArrivals()
+                    totalArrivals,
+                    completedCloudlets,
+                    pendingCloudlets,
+                    avgResponseTime,
+                    avgTurnaroundTime,
+                    overallThroughput,
+                    peakArrival,
+                    peakQueue,
+                    avgCpuUtil,
+                    slaViolationRate,
+                    history
             );
-
         } catch (Exception e) {
-            throw new RuntimeException("Dynamic simulation run failed for strategy: " + strategyName, e);
+            e.printStackTrace();
+            return null;
         }
+    }
+
+    private static List<Vm> createInitialVmList(int brokerId, int count) {
+        List<Vm> vmList = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            int mips = SimulationConfig.VM_MIPS_VALUES[i % SimulationConfig.VM_MIPS_VALUES.length];
+            Vm vm = new Vm(
+                    i,
+                    brokerId,
+                    mips,
+                    SimulationConfig.VM_PES,
+                    SimulationConfig.VM_RAM,
+                    SimulationConfig.VM_BW,
+                    SimulationConfig.VM_SIZE,
+                    SimulationConfig.VM_VMM,
+                    new CloudletSchedulerTimeShared()
+            );
+            vmList.add(vm);
+        }
+        return vmList;
     }
 
     private static Datacenter createDatacenter(String name) throws Exception {
@@ -150,7 +213,7 @@ public class SimulationRunner {
             ));
         }
 
-        DatacenterCharacteristics characteristics = new DatacenterCharacteristics(
+        DatacenterCharacteristics dc = new DatacenterCharacteristics(
                 SimulationConfig.DC_ARCH,
                 SimulationConfig.DC_OS,
                 SimulationConfig.DC_VMM,
@@ -164,66 +227,10 @@ public class SimulationRunner {
 
         return new Datacenter(
                 name,
-                characteristics,
+                dc,
                 new VmAllocationPolicySimple(hostList),
                 new LinkedList<Storage>(),
                 0
         );
-    }
-
-    private static List<Vm> createVms(int brokerId) {
-        List<Vm> vms = new ArrayList<>();
-        for (int i = 0; i < SimulationConfig.NUM_VMS; i++) {
-            int mips = SimulationConfig.VM_MIPS_VALUES[i % SimulationConfig.VM_MIPS_VALUES.length];
-
-            vms.add(new Vm(
-                    i,
-                    brokerId,
-                    mips,
-                    SimulationConfig.VM_PES,
-                    SimulationConfig.VM_RAM,
-                    SimulationConfig.VM_BW,
-                    SimulationConfig.VM_SIZE,
-                    SimulationConfig.VM_VMM,
-                    new CloudletSchedulerTimeShared()
-            ));
-        }
-        return vms;
-    }
-
-    private static List<Cloudlet> createCloudlets(int brokerId) {
-        List<Cloudlet> cloudlets = new ArrayList<>();
-        UtilizationModel um = new UtilizationModelFull();
-        Random rng = new Random(SimulationConfig.CLOUDLET_SEED);
-
-        for (int i = 0; i < SimulationConfig.NUM_CLOUDLETS; i++) {
-            int tier = i % 3;
-            long minLen, maxLen;
-
-            if (tier == 0) {
-                minLen = SimulationConfig.CL_LENGTH_SHORT_MIN;
-                maxLen = SimulationConfig.CL_LENGTH_SHORT_MAX;
-            } else if (tier == 1) {
-                minLen = SimulationConfig.CL_LENGTH_MEDIUM_MIN;
-                maxLen = SimulationConfig.CL_LENGTH_MEDIUM_MAX;
-            } else {
-                minLen = SimulationConfig.CL_LENGTH_LONG_MIN;
-                maxLen = SimulationConfig.CL_LENGTH_LONG_MAX;
-            }
-
-            long length = minLen + (long) (rng.nextDouble() * (maxLen - minLen));
-
-            Cloudlet cl = new Cloudlet(
-                    i,
-                    length,
-                    SimulationConfig.CL_PES,
-                    SimulationConfig.CL_FILE_SIZE,
-                    SimulationConfig.CL_OUTPUT_SIZE,
-                    um, um, um
-            );
-            cl.setUserId(brokerId);
-            cloudlets.add(cl);
-        }
-        return cloudlets;
     }
 }

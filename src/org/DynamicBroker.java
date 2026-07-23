@@ -26,14 +26,14 @@ public class DynamicBroker extends DatacenterBroker {
 
     /**
      * Dynamically registers and sends a newly scaled-up VM creation event to the Datacenter.
-     * Uses VM_CREATE so VmAllocationPolicy binds the host mapping properly.
+     * Uses VM_CREATE_ACK so Datacenter sends back an acknowledgment triggering processVmCreate().
      */
     public void registerAndCreateVm(Vm vm, int datacenterId) {
         getVmList().add(vm);
         getVmsToDatacentersMap().put(vm.getId(), datacenterId);
 
-        // Send VM_CREATE to ensure Datacenter and VmAllocationPolicy register host allocation
-        send(datacenterId, 0.0, CloudSimTags.VM_CREATE, vm);
+        // Send VM_CREATE_ACK so Datacenter sends an acknowledgment event back to the broker
+        send(datacenterId, 0.0, CloudSimTags.VM_CREATE_ACK, vm);
     }
 
     /**
@@ -82,7 +82,6 @@ public class DynamicBroker extends DatacenterBroker {
         if (result == CloudSimTags.TRUE) {
             getVmsToDatacentersMap().put(vmId, datacenterId);
 
-            // Replaced VmList helper with direct list lookup to eliminate import dependencies
             Vm vm = null;
             for (Vm v : getVmList()) {
                 if (v.getId() == vmId) {
@@ -93,7 +92,10 @@ public class DynamicBroker extends DatacenterBroker {
 
             if (vm != null && !getVmsCreatedList().contains(vm)) {
                 getVmsCreatedList().add(vm);
+                System.out.println("[DynamicBroker] Successfully created and registered active VM #" + vmId);
             }
+        } else {
+            System.err.println("[DynamicBroker] VM #" + vmId + " creation failed in Datacenter #" + datacenterId + " (out of host capacity)");
         }
 
         // Flush buffered cloudlets when active VMs are available

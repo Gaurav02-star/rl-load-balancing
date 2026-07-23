@@ -21,19 +21,19 @@ public class SimulationConfig {
     public static final double  DC_COST_BW      = 0.0;
 
     // ── Hosts ─────────────────────────────────────────────────────────────────
-    public static final int     NUM_HOSTS       = 6;        // Expanded host count to guarantee MIPS headroom
-    public static final int     HOST_MIPS       = 8000;     // Expanded MIPS per host PE
+    public static final int     NUM_HOSTS       = 6;
+    public static final int     HOST_MIPS       = 8000;
     public static final int     HOST_PES        = 4;
-    public static final int     HOST_RAM        = 32768;    // 32 GB RAM per host
+    public static final int     HOST_RAM        = 32768;
     public static final long    HOST_STORAGE    = 1_000_000;
-    public static final int     HOST_BW         = 100_000;  // 100,000 Bandwidth
+    public static final int     HOST_BW         = 100_000;
 
     // ── VMs ───────────────────────────────────────────────────────────────────
     public static final int     NUM_VMS         = 4;
     public static final int     MIN_VMS         = 2;
     public static final int     MAX_VMS         = 8;
 
-    public static final int[]   VM_MIPS_VALUES  = {500, 1000, 1500, 2000};
+    public static final int[]   VM_MIPS_VALUES  = {3000, 4000, 5000, 6000};
 
     public static final int     VM_PES          = 1;
     public static final int     VM_RAM          = 1024;
@@ -65,13 +65,13 @@ public class SimulationConfig {
     public static final double   WORKLOAD_DURATION       = 100.0;
     public static final double   MONITORING_SAMPLE_INTERVAL = 1.0;
     public static final double   MONITORING_WINDOW_SIZE  = 10.0;
-    public static final double   MEAN_ARRIVAL_RATE       = 2.0;
+    public static final double   MEAN_ARRIVAL_RATE       = 5.0; // Increased to 5.0 tasks/s for heavy load stress-testing
     public static final long     WORKLOAD_RANDOM_SEED    = 42L;
-    public static final double   RESPONSE_TIME_SLA       = 2.0;
+    public static final double   RESPONSE_TIME_SLA       = 0.5; // Tightened to 0.5s to penalize queue delays
     public static final double   TELEMETRY_PRINT_INTERVAL = 5.0;
 
     // ── Autoscaling Configuration (Phase 3) ───────────────────────────────────
-    public static final double   AUTOSCALING_INTERVAL    = 10.0; // Periodic scaling tick (s)
+    public static final double   AUTOSCALING_INTERVAL    = 10.0;
 
     private SimulationConfig() {}
 }
