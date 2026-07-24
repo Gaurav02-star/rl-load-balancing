@@ -19,46 +19,6 @@ import java.util.*;
 
 public class SimulationRunner {
 
-    public static List<Cloudlet> run(AssignmentStrategy strategy, String strategyName) {
-        try {
-            CloudSim.init(SimulationConfig.NUM_USERS, Calendar.getInstance(), SimulationConfig.TRACE_FLAG);
-
-            String safeName = strategyName.replaceAll("\\s+", "_").replaceAll("[^a-zA-Z0-9_]", "");
-
-            Datacenter datacenter = createDatacenter("Datacenter_" + safeName);
-            DynamicBroker broker = new DynamicBroker("Broker_" + safeName);
-            CloudSimGateway gateway = new CloudSimGateway(broker);
-
-            // Submit initial VMs via standard broker call so Datacenter creates them at t=0
-            List<Vm> initialVms = createInitialVmList(broker.getId(), SimulationConfig.NUM_VMS);
-            broker.submitVmList(initialVms);
-
-            ArrivalDistribution distribution = new PoissonArrival(
-                    SimulationConfig.MEAN_ARRIVAL_RATE,
-                    SimulationConfig.WORKLOAD_RANDOM_SEED
-            );
-
-            DynamicScheduler scheduler = new DynamicScheduler(strategy, gateway);
-
-            WorkloadGenerator workloadGenerator = new WorkloadGenerator(
-                    "WorkloadGenerator_" + safeName,
-                    distribution,
-                    scheduler,
-                    SimulationConfig.WORKLOAD_DURATION,
-                    SimulationConfig.WORKLOAD_RANDOM_SEED,
-                    broker.getId()
-            );
-
-            CloudSim.startSimulation();
-            CloudSim.stopSimulation();
-
-            return gateway.getCompletedCloudlets();
-        } catch (Exception e) {
-            e.printStackTrace();
-            return new ArrayList<>();
-        }
-    }
-
     public static DynamicSimulationResult runDynamic(AssignmentStrategy strategy, String strategyName, Autoscaler autoscaler) {
         try {
             CloudSim.init(SimulationConfig.NUM_USERS, Calendar.getInstance(), SimulationConfig.TRACE_FLAG);
@@ -69,7 +29,12 @@ public class SimulationRunner {
             DynamicBroker broker = new DynamicBroker("Broker_" + safeName);
             CloudSimGateway gateway = new CloudSimGateway(broker);
 
-            // Submit initial VMs to broker list so CloudSim binds them to hosts at startup
+            PendingTaskQueue pendingQueue = new PendingTaskQueue();
+            TaskDispatcher dispatcher = new TaskDispatcher(pendingQueue, gateway, strategy);
+
+            broker.setTaskDispatcher(dispatcher);
+            gateway.setTaskDispatcher(dispatcher);
+
             List<Vm> initialVms = createInitialVmList(broker.getId(), SimulationConfig.MIN_VMS);
             broker.submitVmList(initialVms);
 
@@ -84,7 +49,7 @@ public class SimulationRunner {
                     SimulationConfig.WORKLOAD_RANDOM_SEED
             );
 
-            DynamicScheduler scheduler = new DynamicScheduler(strategy, gateway);
+            DynamicScheduler scheduler = new DynamicScheduler(pendingQueue, dispatcher);
 
             WorkloadGenerator workloadGenerator = new WorkloadGenerator(
                     "WorkloadGenerator_" + safeName,
@@ -98,6 +63,8 @@ public class SimulationRunner {
             MonitoringModule monitoringModule = new MonitoringModule(
                     "MonitoringModule_" + safeName,
                     gateway,
+                    pendingQueue,
+                    dispatcher,
                     workloadGenerator,
                     lifecycleManager,
                     autoscaler,
@@ -107,13 +74,14 @@ public class SimulationRunner {
             );
 
             CloudSim.startSimulation();
+            double finishTime = CloudSim.clock(); // Capture exact simulation finish timestamp
             CloudSim.stopSimulation();
 
             List<ClusterState> history = monitoringModule.getHistory();
             List<Cloudlet> completedCloudlets = gateway.getCompletedCloudlets();
 
             long totalArrivals = workloadGenerator.getTotalArrivals();
-            int pendingCloudlets = (int) Math.max(0, totalArrivals - completedCloudlets.size());
+            int pendingCloudlets = pendingQueue.size();
 
             double totalResponseTime = 0.0;
             double totalTurnaroundTime = 0.0;
@@ -140,19 +108,37 @@ public class SimulationRunner {
             double avgTurnaroundTime = (count > 0) ? (totalTurnaroundTime / count) : 0.0;
             double slaViolationRate = (count > 0) ? ((double) slaViolations / count) : 0.0;
 
-            double overallThroughput = (CloudSim.clock() > 0) ? ((double) count / CloudSim.clock()) : 0.0;
+            double overallThroughput = (finishTime > 0) ? ((double) count / finishTime) : 0.0;
 
             double peakArrival = 0.0;
             double peakQueue = 0.0;
             double sumCpuUtil = 0.0;
+            double sumVmCount = 0.0;
+            double totalVmSeconds = 0.0; // <--- Time-integral accumulator
 
-            for (ClusterState s : history) {
-                if (s.getArrivalRate() > peakArrival) peakArrival = s.getArrivalRate();
-                if (s.getAverageQueueLength() > peakQueue) peakQueue = s.getAverageQueueLength();
-                sumCpuUtil += s.getAverageCpuUtilisation();
+            int historySize = history.size();
+            for (int i = 0; i < historySize; i++) {
+                ClusterState current = history.get(i);
+
+                if (current.getArrivalRate() > peakArrival) peakArrival = current.getArrivalRate();
+                if (current.getAverageQueueLength() > peakQueue) peakQueue = current.getAverageQueueLength();
+                sumCpuUtil += current.getAverageCpuUtilisation();
+                sumVmCount += current.getActiveVmCount();
+
+                // Compute exact delta to next tick or simulation finish time
+                double timeDelta;
+                if (i < historySize - 1) {
+                    timeDelta = history.get(i + 1).getTime() - current.getTime();
+                } else {
+                    timeDelta = Math.max(0.0, finishTime - current.getTime());
+                }
+
+                // Time-integrate active VM count across this tick interval
+                totalVmSeconds += current.getActiveVmCount() * timeDelta;
             }
 
-            double avgCpuUtil = (!history.isEmpty()) ? (sumCpuUtil / history.size()) : 0.0;
+            double avgCpuUtil = (!history.isEmpty()) ? (sumCpuUtil / historySize) : 0.0;
+            double avgVmCount = (!history.isEmpty()) ? (sumVmCount / historySize) : 0.0;
 
             return new DynamicSimulationResult(
                     strategyName,
@@ -165,6 +151,8 @@ public class SimulationRunner {
                     peakArrival,
                     peakQueue,
                     avgCpuUtil,
+                    avgVmCount,
+                    totalVmSeconds, // <--- Pass total VM-seconds
                     slaViolationRate,
                     history
             );

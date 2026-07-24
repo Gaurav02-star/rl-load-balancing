@@ -7,29 +7,26 @@ import java.util.List;
 
 /**
  * CloudSimGateway.java
- * Isolates direct communication with classic CloudSim runtime state during dynamic execution.
+ * Abstraction layer connecting the scheduler, broker, and task dispatcher.
  */
 public class CloudSimGateway {
 
     private final DynamicBroker broker;
+    private TaskDispatcher dispatcher;
 
     public CloudSimGateway(DynamicBroker broker) {
         this.broker = broker;
     }
 
-    /**
-     * Returns active created VMs if available; falls back to submitted VMs if at simulation start (t = 0.0).
-     */
-    public List<Vm> getActiveVms() {
-        List<Vm> createdVms = broker.getActiveVms();
-        if (!createdVms.isEmpty()) {
-            return createdVms;
-        }
-        // Fallback for t = 0.0 before Datacenter VM creation event completes
-        return broker.getSubmittedVms();
+    public void setTaskDispatcher(TaskDispatcher dispatcher) {
+        this.dispatcher = dispatcher;
     }
 
-    public void submitCloudlet(Cloudlet cloudlet) {
+    public List<Vm> getActiveVms() {
+        return broker.getActiveVms();
+    }
+
+    public void submitCloudletDirectly(Cloudlet cloudlet) {
         broker.submitDynamicCloudlet(cloudlet);
     }
 
@@ -38,7 +35,10 @@ public class CloudSimGateway {
     }
 
     public int getInFlightCloudletCount() {
-        return broker.getInFlightCloudletCount();
+        if (dispatcher != null) {
+            return dispatcher.getTotalInFlight();
+        }
+        return 0;
     }
 
     public DynamicBroker getBroker() {

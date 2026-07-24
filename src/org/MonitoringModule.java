@@ -13,13 +13,16 @@ import java.util.Map;
 
 /**
  * MonitoringModule.java
- * SimEntity sampling telemetry snapshots and orchestrating autoscaling ticks safely without memory leaks.
+ * Samples telemetry using real queue depth from PendingTaskQueue and active VM capacity usage.
+ * Includes a 15-second post-completion grace period to allow full scale-down convergence.
  */
 public class MonitoringModule extends SimEntity {
 
     public static final int EVENT_MONITOR_TICK = 8001;
 
     private final CloudSimGateway gateway;
+    private final PendingTaskQueue pendingQueue;
+    private final TaskDispatcher dispatcher;
     private final WorkloadGenerator workloadGenerator;
     private final VmLifecycleManager lifecycleManager;
     private final Autoscaler autoscaler;
@@ -29,10 +32,13 @@ public class MonitoringModule extends SimEntity {
     private final List<ClusterState> history = new ArrayList<>();
 
     private double lastAutoscaleTime = 0.0;
+    private double allFinishedTime = -1.0;
     private ClusterState latestState = null;
 
     public MonitoringModule(String name,
                             CloudSimGateway gateway,
+                            PendingTaskQueue pendingQueue,
+                            TaskDispatcher dispatcher,
                             WorkloadGenerator workloadGenerator,
                             VmLifecycleManager lifecycleManager,
                             Autoscaler autoscaler,
@@ -41,6 +47,8 @@ public class MonitoringModule extends SimEntity {
                             double slaThreshold) {
         super(name);
         this.gateway = gateway;
+        this.pendingQueue = pendingQueue;
+        this.dispatcher = dispatcher;
         this.workloadGenerator = workloadGenerator;
         this.lifecycleManager = lifecycleManager;
         this.autoscaler = autoscaler;
@@ -60,7 +68,7 @@ public class MonitoringModule extends SimEntity {
             double currentTime = CloudSim.clock();
             sampleTelemetry(currentTime);
 
-            // Trigger Autoscaling periodically
+            // Periodically evaluate autoscaling actions
             if (autoscaler != null && lifecycleManager != null) {
                 if (currentTime - lastAutoscaleTime >= SimulationConfig.AUTOSCALING_INTERVAL) {
                     AutoscalerAction action = autoscaler.evaluateScaling(latestState);
@@ -75,12 +83,24 @@ public class MonitoringModule extends SimEntity {
 
             long totalArrivals = workloadGenerator.getTotalArrivals();
             List<Cloudlet> completed = gateway.getCompletedCloudlets();
-            int pending = gateway.getInFlightCloudletCount();
+            int pendingInQueue = pendingQueue.size();
+            int inFlightTasks = dispatcher.getTotalInFlight();
 
-            // Continue monitoring ticks as long as tasks are still arriving or processing in queues
-            boolean keepRunning = (totalArrivals == 0) || (completed.size() < totalArrivals) || (pending > 0);
+            boolean tasksFinished = (totalArrivals > 0)
+                    && (completed.size() >= totalArrivals)
+                    && (pendingInQueue == 0)
+                    && (inFlightTasks == 0);
 
-            if (keepRunning && currentTime < (SimulationConfig.WORKLOAD_DURATION + 500.0)) {
+            if (tasksFinished && allFinishedTime < 0) {
+                allFinishedTime = currentTime;
+            }
+
+            // Allow 15s post-completion runway so autoscaler can step down 7 -> 6 -> 5 -> 4 -> 3 -> 2
+            boolean gracePeriodActive = (allFinishedTime > 0) && ((currentTime - allFinishedTime) <= 15.0);
+            boolean shouldContinue = (!tasksFinished || gracePeriodActive)
+                    && (currentTime < (SimulationConfig.WORKLOAD_DURATION + 80.0));
+
+            if (shouldContinue) {
                 schedule(getId(), sampleInterval, EVENT_MONITOR_TICK);
             }
         }
@@ -99,7 +119,8 @@ public class MonitoringModule extends SimEntity {
         long totalArrivals = workloadGenerator.getTotalArrivals();
         long totalCompletions = completedList.size();
 
-        int pendingCloudlets = (int) Math.max(0, totalArrivals - totalCompletions);
+        int pendingCloudlets = pendingQueue.size();
+        int totalInFlight = dispatcher.getTotalInFlight();
 
         double windowStart = Math.max(0.0, currentTime - windowSize);
         double effectiveWindow = Math.max(1.0e-3, currentTime - windowStart);
@@ -136,18 +157,20 @@ public class MonitoringModule extends SimEntity {
         double avgResponseTime = (completionsInWindow > 0) ? (sumResponseTime / completionsInWindow) : 0.0;
         double slaViolationRate = (completionsInWindow > 0) ? ((double) slaViolationsInWindow / completionsInWindow) : 0.0;
 
-        int inFlightCount = gateway.getInFlightCloudletCount();
-        double avgQueueLength = (double) inFlightCount / activeVmCount;
+        double avgQueueLength = (double) pendingCloudlets / activeVmCount;
 
-        // NOTE: This is a heuristic proxy for CPU load, not a real utilization reading from
-        // CloudSim's Vm/Host MIPS accounting. It assumes a fixed "capacity" of 2 concurrent
-        // cloudlets per active VM. Once activeVmCount correctly reflects scale-up/down (see
-        // DynamicBroker fix), this ratio will move as intended -- but if you still see it
-        // pinned at a suspiciously round number, check whether inFlightCount (sourced from
-        // DynamicBroker.getInFlightCloudletCount()) is actually receiving all arriving
-        // cloudlets, or whether your scheduler/workload generator is buffering cloudlets
-        // internally before calling broker.submitDynamicCloudlet().
-        double avgCpuUtilisation = Math.min(1.0, (double) inFlightCount / (activeVmCount * 2.0));
+        // Reset CPU to 0.0 when system has no pending queue and zero in-flight tasks
+        double avgCpuUtilisation = 0.0;
+        if (pendingCloudlets > 0 || totalInFlight > 0) {
+            double totalCpuRatio = 0.0;
+            for (Vm vm : activeVms) {
+                int capacity = vm.getNumberOfPes() * SimulationConfig.CONCURRENCY_FACTOR;
+                int inFlight = dispatcher.getInFlightCount(vm.getId());
+                double ratio = Math.min(1.0, (double) inFlight / capacity);
+                totalCpuRatio += ratio;
+            }
+            avgCpuUtilisation = totalCpuRatio / activeVmCount;
+        }
 
         ClusterState snapshot = new ClusterState(
                 currentTime,

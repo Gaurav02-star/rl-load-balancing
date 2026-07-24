@@ -5,11 +5,12 @@ import org.cloudbus.cloudsim.Vm;
 
 import java.util.*;
 
+/**
+ * HeuristicsStrategy.java
+ * Persistent Minimum Completion Time (MCT) and Round-Robin over capacity-eligible VMs.
+ */
 public class HeuristicsStrategy {
 
-    /**
-     * Minimum Completion Time (MCT) Strategy with persistent VM load tracking.
-     */
     public static class MCTStrategy implements AssignmentStrategy {
         private final Map<Integer, Double> vmFinishTimes = new HashMap<>();
 
@@ -41,9 +42,6 @@ public class HeuristicsStrategy {
         }
     }
 
-    /**
-     * Round-Robin Strategy with persistent counter.
-     */
     public static class RoundRobinStrategy implements AssignmentStrategy {
         private int counter = 0;
 

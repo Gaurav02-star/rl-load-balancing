@@ -1,33 +1,29 @@
 package org;
 
 import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Vm;
 
-import java.util.Collections;
-import java.util.List;
-
+/**
+ * DynamicScheduler.java
+ * Receives arrivals from WorkloadGenerator, enqueues them into PendingTaskQueue,
+ * and triggers a TaskDispatcher drain pass.
+ */
 public class DynamicScheduler {
 
-    private final AssignmentStrategy strategy;
-    private final CloudSimGateway gateway;
+    private final PendingTaskQueue pendingQueue;
+    private final TaskDispatcher dispatcher;
 
-    public DynamicScheduler(AssignmentStrategy strategy, CloudSimGateway gateway) {
-        this.strategy = strategy;
-        this.gateway = gateway;
+    public DynamicScheduler(PendingTaskQueue pendingQueue, TaskDispatcher dispatcher) {
+        this.pendingQueue = pendingQueue;
+        this.dispatcher = dispatcher;
     }
 
     public void scheduleArrival(Cloudlet cloudlet) {
-        List<Vm> activeVms = gateway.getActiveVms();
-        if (activeVms == null || activeVms.isEmpty()) {
-            throw new IllegalStateException("No active VMs available in CloudSimGateway for scheduling.");
-        }
+        if (cloudlet == null) return;
 
-        if (strategy instanceof RLStrategy) {
-            ((RLStrategy) strategy).assignIncremental(cloudlet, activeVms);
-        } else {
-            strategy.assign(Collections.singletonList(cloudlet), activeVms);
-        }
+        // Push to pending queue
+        pendingQueue.add(cloudlet);
 
-        gateway.submitCloudlet(cloudlet);
+        // Attempt dispatch drain pass
+        dispatcher.drainQueue();
     }
 }
