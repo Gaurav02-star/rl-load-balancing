@@ -40,7 +40,7 @@ public class RLAutoscaler implements Autoscaler {
     private String lastState        = null;
     private int    lastActionIdx    = ACTION_NO_OP;
     private double lastQueueLength   = 0.0;
-    private boolean lastWasOffPolicy = false;
+
 
     // ── Instrumentation & Diagnostics ────────────────────────────────────────
 
@@ -63,7 +63,7 @@ public class RLAutoscaler implements Autoscaler {
      */
     public void startEpisode(int episode, int totalEpisodes) {
         // Explicit double cast prevents Java integer division truncation
-        this.epsilon = Math.max(0.0, 1.0 - (double) (episode - 1) / totalEpisodes);
+        this.epsilon = Math.max(0.05, 1.0 - (double) (episode - 1) / totalEpisodes);
         this.lastState = null;
         this.lastActionIdx = ACTION_NO_OP;
         this.lastQueueLength = 0.0;
@@ -85,7 +85,7 @@ public class RLAutoscaler implements Autoscaler {
         if (currentQueue == 0.0 && state.getAverageCpuUtilisation() == 0.0) {
             if (epsilon > 0.0 && lastState != null) {
                 double reward = calculateReward(state);
-                settleUpdate(lastState, lastActionIdx, reward, null, lastWasOffPolicy);
+                settleUpdate(lastState, lastActionIdx, reward, null, ACTION_NO_OP);
             }
             lastState = null;
             lastQueueLength = currentQueue;
@@ -107,7 +107,6 @@ public class RLAutoscaler implements Autoscaler {
 
         // FIX 1: Pass activeVms into chooseAction to apply strict action masking
         int desiredActionIdx = chooseAction(currentState, activeVms);
-        boolean wasExploratory = lastChoiceWasExploratory;
 
         // Record policy decision attempts for diagnostic instrumentation
         actionAttemptCounts.putIfAbsent(currentState, new long[NUM_ACTIONS]);
@@ -115,7 +114,7 @@ public class RLAutoscaler implements Autoscaler {
 
         if (epsilon > 0.0 && lastState != null) {
             double reward = calculateReward(state);
-            settleUpdate(lastState, lastActionIdx, reward, currentState, lastWasOffPolicy);
+            settleUpdate(lastState, lastActionIdx, reward, currentState, desiredActionIdx);
         }
 
         int executedActionIdx;
@@ -166,7 +165,6 @@ public class RLAutoscaler implements Autoscaler {
         // relative to valid alternatives without corrupting TD-error scale.
         lastState        = currentState;
         lastActionIdx     = desiredActionIdx;
-        lastWasOffPolicy  = wasExploratory || gateOverrode;
         lastQueueLength   = currentQueue;
 
         return executedAction;
@@ -177,18 +175,18 @@ public class RLAutoscaler implements Autoscaler {
     // =========================================================================
 
     private void settleUpdate(String state, int actionIdx, double reward,
-                              String nextState, boolean wasOffPolicy) {
+                              String nextState, int nextActionIdx) {
 
         qTable.putIfAbsent(state, new double[NUM_ACTIONS]);
         double qOld = qTable.get(state)[actionIdx];
 
-        double maxQNext = 0.0;
+        double nextQ = 0.0;
         if (nextState != null) {
             qTable.putIfAbsent(nextState, new double[NUM_ACTIONS]);
-            maxQNext = max(qTable.get(nextState));
+            nextQ = qTable.get(nextState)[nextActionIdx];
         }
 
-        double tdError = reward + gamma * maxQNext - qOld;
+        double tdError = reward + gamma * nextQ -  qOld;
 
         eTrace.putIfAbsent(state, new double[NUM_ACTIONS]);
         eTrace.get(state)[actionIdx] += 1.0;
@@ -204,7 +202,7 @@ public class RLAutoscaler implements Autoscaler {
             }
         }
 
-        if (wasOffPolicy || nextState == null) {
+        if (nextState == null) {
             eTrace.clear();
         }
     }
@@ -216,15 +214,26 @@ public class RLAutoscaler implements Autoscaler {
     private String encodeState(ClusterState state) {
         double cpu   = state.getAverageCpuUtilisation();
         double queue = state.getAverageQueueLength();
-
+        double predictedArrival = state.getPredictedArrivalRate();
         double deltaQueue = queue - lastQueueLength;
         char trendTier = deltaQueue > 0.05 ? 'R' : 'N';
 
         char cpuTier   = cpu > 0.50 ? 'H' : 'L';
         char queueTier = queue > 0.1 ? 'H' : (queue > 0.0 ? 'M' : 'Z');
+
+
+        char predictionTier;
+
+        if (predictedArrival < 2.0) {
+            predictionTier = 'L';
+        } else if (predictedArrival < 5.0) {
+            predictionTier = 'M';
+        } else {
+            predictionTier = 'H';
+        }
         char vmTier    = tierVmCount(state.getActiveVmCount());
 
-        return "C" + cpuTier + "Q" + queueTier + "T" + trendTier + "V" + vmTier;
+        return "C" + cpuTier + "Q" + queueTier + "T" + trendTier + "P" + predictionTier + "V" + vmTier;
     }
 
     private char tierVmCount(int activeVms) {
@@ -250,13 +259,12 @@ public class RLAutoscaler implements Autoscaler {
         }
 
         reward -= state.getAverageResponseTime() * 80.0;
-        reward -= state.getSlaViolationRate() * 150.0;
+        reward -= state.getSlaViolationRate() * 250.0;
         reward -= currentQueue * 40.0;
 
         if (currentQueue == 0.0 && state.getAverageCpuUtilisation() < 0.10) {
             reward += 10.0;
         }
-
         return reward;
     }
 

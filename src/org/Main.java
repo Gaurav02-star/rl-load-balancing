@@ -5,7 +5,7 @@ import java.util.List;
 
 public class Main {
 
-    private static final int TRAINING_EPISODES = 30;
+    private static final int TRAINING_EPISODES = 200;
 
     public static void main(String[] args) {
         System.out.println("==========================================================================");
